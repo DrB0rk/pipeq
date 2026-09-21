@@ -1,0 +1,35 @@
+name: Bug report
+description: Report a reproducible PipeQ problem
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please remove private device names, preset contents, and credentials from logs.
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      placeholder: 1. Start PipeQ...
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Environment
+      description: PipeQ version, Node version, PipeWire version, distro, terminal
+    validations:
+      required: true

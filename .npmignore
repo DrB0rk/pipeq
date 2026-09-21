@@ -1,0 +1,10 @@
+test/
+src/
+examples/
+.github/
+.agents/
+.omx/
+docs/
+*.tsbuildinfo
+.gitignore
+.editorconfig
