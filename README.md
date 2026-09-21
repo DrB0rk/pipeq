@@ -29,7 +29,7 @@ PipeQ does not resample audio or force a sample format. PipeWire negotiates the 
 Clone the repository, install dependencies, build, and start:
 
 ```sh
-git clone https://github.com/YOUR_USERNAME/pipeq.git
+git clone https://github.com/DrB0rk/pipeq.git
 cd pipeq
 npm install
 npm run build

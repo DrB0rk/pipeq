@@ -21,5 +21,5 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Preset creation, loading, and immediate selected-preset saving.
 - Safe EQ/physical-device routing with fades and volume preservation.
 
-[Unreleased]: https://github.com/YOUR_USERNAME/pipeq/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/YOUR_USERNAME/pipeq/releases/tag/v0.1.0
+[Unreleased]: https://github.com/DrB0rk/pipeq/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/DrB0rk/pipeq/releases/tag/v0.1.0
