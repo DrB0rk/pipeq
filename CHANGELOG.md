@@ -8,6 +8,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 No unreleased changes.
 
+## [0.2.0] - 2026-09-21
+
+### Added
+
+- User-local curl installer with version pinning and rollback-safe upgrades.
+- `pq` as the short command alias for launching PipeQ.
+
 ## [0.1.0] - 2026-09-21
 
 ### Added
@@ -20,5 +27,6 @@ No unreleased changes.
 - Safe EQ/physical-device routing with fades and volume preservation.
 - Open-source project policy, CI, release automation, and contributor guidance.
 
-[Unreleased]: https://github.com/DrB0rk/pipeq/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/DrB0rk/pipeq/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/DrB0rk/pipeq/releases/tag/v0.2.0
 [0.1.0]: https://github.com/DrB0rk/pipeq/releases/tag/v0.1.0

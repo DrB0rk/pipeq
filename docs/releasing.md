@@ -3,7 +3,7 @@
 PipeQ follows Semantic Versioning: `MAJOR.MINOR.PATCH`.
 
 - `PATCH`: bug fixes, docs, tests, and backwards-compatible safety fixes.
-- `MINOR`: backwards-compatible features or new controls.
+- `MINOR`: backwards-compatible features or new controls, including installer and CLI entry-point additions.
 - `MAJOR`: breaking configuration, runtime, or support changes.
 
 ## Release requirements

@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, measureElement, render, Spacer, Text, useApp, useInput, useStdin, useStdout } from "ink";
 import type { DOMElement, ElementMetrics } from "ink";

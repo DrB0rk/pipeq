@@ -26,6 +26,44 @@ PipeQ does not resample audio or force a sample format. PipeWire negotiates the 
 
 ## Install and run
 
+### One-command user install
+
+The recommended install is user-local and does not require `sudo`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/DrB0rk/pipeq/main/install.sh | bash
+pq
+```
+
+The installer downloads the latest stable GitHub release, builds PipeQ locally, and links the `pq` command at `~/.local/bin/pq`. It never changes system files or PipeWire settings during installation. If `pq` is not found afterward, add the user bin directory to your shell path:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Pin an exact release when reproducibility matters:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/DrB0rk/pipeq/main/install.sh \
+  | PIPEQ_VERSION=v0.2.0 bash
+```
+
+To upgrade, run the installer again. To remove the user-local install:
+
+```sh
+rm -f "$HOME/.local/bin/pq"
+rm -rf "${XDG_DATA_HOME:-$HOME/.local/share}/pipeq"
+```
+
+The `pipeq` npm package alias is also available when developing from a checkout:
+
+```sh
+npm install
+npm run build
+npm link
+pq
+```
+
 Clone the repository, install dependencies, build, and start:
 
 ```sh

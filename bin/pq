@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+set -eu
+
+SCRIPT_PATH="$(readlink -f "$0")"
+INSTALL_ROOT="$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")/.." && pwd)"
+exec node "$INSTALL_ROOT/dist/cli.js" "$@"
