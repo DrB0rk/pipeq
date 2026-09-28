@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { BASS_BOOST_FREQUENCY, BASS_BOOST_MAX, BASS_BOOST_PORT, BASS_TRIM_PORT, GAIN_STEP, PREAMP_MAX, PREAMP_PORT, bassBoostFromParams, bassTrimForBoost, buildBands, flattenParams, formatFrequency, formatValue, hasPreamp, headroomTrimForBands, preampFromParams, preampMultiplierForDb, preserveBandIndex, stepBand } from "../src/eq.js";
 import { SgrMouseParser } from "../src/mouse.js";
-import { ROUTED_STAGE_VOLUME, buildDefaultEqConfig, effectiveVolume, effectiveVolumeForDefault, parseDefaultAudioSinkId, volumeFadeValues, volumesForTarget } from "../src/pipewire.js";
+import { ROUTED_STAGE_VOLUME, buildDefaultEqConfig, effectiveVolume, effectiveVolumeForDefault, externalRouteAction, parseDefaultAudioSinkId, volumeFadeValues, volumesForTarget } from "../src/pipewire.js";
 import { upsertPreset } from "../src/presets.js";
 
 test("flattenParams converts PipeWire's alternating params struct", () => {
@@ -68,6 +68,13 @@ test("default EQ config contains a linked ten-band filter chain", () => {
   assert.match(config, /node\.name = "effect_input\.pipeq-default"/);
 });
 
+test("new EQ configuration uses validated user audio defaults with headroom trim", () => {
+  const config = buildDefaultEqConfig({ preamp: -6, bassBoost: 5 });
+  assert.match(config, /name = preamp label = linear control = \{ Mult = 0\.50118723/);
+  assert.match(config, /name = bass label = bq_lowshelf control = \{ Freq = 120 Q = 0\.7 Gain = 5\.00/);
+  assert.match(config, /name = bass_trim label = linear control = \{ Mult = 0\.56234133/);
+});
+
 test("bass boost is bounded and keeps output headroom in sync", () => {
   assert.equal(BASS_BOOST_FREQUENCY, 120);
   assert.equal(bassBoostFromParams({ [BASS_BOOST_PORT]: 12, [BASS_TRIM_PORT]: 1 }), BASS_BOOST_MAX);
@@ -97,6 +104,14 @@ test("headroom trim stays unity when flat and follows positive EQ peaks", () => 
 test("default audio sink parser recognizes physical and filter sinks", () => {
   assert.equal(parseDefaultAudioSinkId("\nAudio\n ├─ Sinks\n │  *  120. ARGON ALTO\n ├─ Sources\n"), 120);
   assert.equal(parseDefaultAudioSinkId("\nAudio\n ├─ Sinks\n │    120. ARGON ALTO\n ├─ Sources\n ├─ Filters\n │  *   43. effect_input.pipeq-default\n └─ Streams\n"), 43);
+});
+
+test("external output changes preserve the active EQ route when automatic routing is enabled", () => {
+  assert.equal(externalRouteAction(43, 120, 43, true), "route-eq");
+  assert.equal(externalRouteAction(43, 120, 43, false), "route-physical");
+  assert.equal(externalRouteAction(120, 43, 43, true), "route-eq");
+  assert.equal(externalRouteAction(120, 121, 43, true), "none");
+  assert.equal(externalRouteAction(43, 43, 43, true), "none");
 });
 
 test("volume handoff preserves effective attenuation in either direction", () => {

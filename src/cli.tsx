@@ -1,21 +1,25 @@
 #!/usr/bin/env node
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { spawn } from "node:child_process";
 import { Box, measureElement, render, Spacer, Text, useApp, useInput, useStdin, useStdout } from "ink";
 import type { DOMElement, ElementMetrics } from "ink";
 
 import { BASS_BOOST_FREQUENCY, BASS_BOOST_MAX, BASS_BOOST_MIN, BASS_BOOST_STEP, GAIN_STEP, MAX_GAIN, PREAMP_MAX, PREAMP_MIN, PREAMP_PORT, PREAMP_STEP, bassBoostFromParams, buildBands, formatFrequency, formatValue, hasBassBoost, hasPreamp, portName, preampFromParams, preserveBandIndex, stepBand, updateBand } from "./eq.js";
 import { SgrMouseParser, type TerminalMouseEvent } from "./mouse.js";
 import { loadPresets, savePresets, upsertPreset } from "./presets.js";
-import { DEFAULT_EQ_DESCRIPTION, PipeWireClient } from "./pipewire.js";
+import { DEFAULT_EQ_DESCRIPTION, PipeWireClient, externalRouteAction } from "./pipewire.js";
+import { startControlServer, type ControlAction, type ControlState, type RunningControlServer } from "./control-server.js";
+import { startTray, type TrayController } from "./tray.js";
+import { defaultSettings, loadSettings, saveSettings, type PipeqSettings } from "./settings.js";
 import type { EqBand, EqParameter, EqPreset, PipeWireNode } from "./types.js";
 
-const PANEL = "#24221F";
-const AMBER = "#F3B562";
-const PAPER = "#E8E7E4";
-const MUTED = "#9B968D";
-const DIM = "#625E58";
-const RED = "#E07A5F";
-const GREEN = "#8FBF9F";
+let PANEL = "#24221F";
+let AMBER = "#F3B562";
+let PAPER = "#E8E7E4";
+let MUTED = "#9B968D";
+let DIM = "#625E58";
+let RED = "#E07A5F";
+let GREEN = "#8FBF9F";
 const MIN_TUI_HEIGHT = 18;
 const MAX_TUI_HEIGHT = 46;
 const HEADER_HEIGHT = 3;
@@ -65,7 +69,27 @@ function parseOptions(argv: string[]): CliOptions {
   return requestedNode ? { requestedNode } : {};
 }
 
-function Header({ width, node, isDefault, message }: { width: number; node: PipeWireNode | undefined; isDefault: boolean; message: string }): React.ReactElement {
+function applyPalette(settings: PipeqSettings["ui"]): void {
+  AMBER = settings.accent;
+  const systemBackground = process.env.COLORFGBG?.split(";").at(-1);
+  if (settings.theme === "light" || (settings.theme === "system" && systemBackground === "15")) {
+    PANEL = "#F0EEE9";
+    PAPER = "#292722";
+    MUTED = "#655F56";
+    DIM = "#8B857B";
+    RED = "#AD3F2B";
+    GREEN = "#32704A";
+  } else {
+    PANEL = "#24221F";
+    PAPER = "#E8E7E4";
+    MUTED = "#9B968D";
+    DIM = "#625E58";
+    RED = "#E07A5F";
+    GREEN = "#8FBF9F";
+  }
+}
+
+function Header({ width, node, isDefault, message, preset, dirty }: { width: number; node: PipeWireNode | undefined; isDefault: boolean; message: string; preset: string; dirty: boolean }): React.ReactElement {
   const innerWidth = Math.max(1, width - 4);
   const statusWidth = node ? 12 : 14;
   const messageWidth = Math.min(30, Math.max(10, Math.floor(innerWidth * 0.28)));
@@ -75,7 +99,8 @@ function Header({ width, node, isDefault, message }: { width: number; node: Pipe
       <Box width={innerWidth} flexDirection="row" alignItems="center">
         <Box width={titleWidth} flexShrink={1}>
           <Text color={AMBER} bold>PIPEQ</Text>
-          <Text color={DIM}>  /  REALTIME EQUALIZER</Text>
+          <Text color={DIM}>  /  EQ  ·  </Text>
+          <Text color={dirty ? AMBER : PAPER} bold={dirty} wrap="truncate-end">{preset || "no preset"}{dirty ? " *" : ""}</Text>
         </Box>
         <Spacer />
         <Box width={messageWidth}>
@@ -358,7 +383,7 @@ function SavePresetDialog({ width, name, busy }: { width: number; name: string; 
   );
 }
 
-function HelpView({ width, height }: { width: number; height: number }): React.ReactElement {
+function HelpView({ width, height, webUrl, keybindings }: { width: number; height: number; webUrl?: string | undefined; keybindings: PipeqSettings["ui"]["keybindings"] }): React.ReactElement {
   const compact = width < 92 || height < 30;
   const panelWidth = Math.min(80, Math.max(30, width - 8));
   return (
@@ -368,14 +393,14 @@ function HelpView({ width, height }: { width: number; height: number }): React.R
         <Text color={DIM} wrap="truncate-end">────────────────────────────────────────────────</Text>
         {compact ? (
           <Box marginTop={1} flexDirection="column">
-            <Text color={PAPER} wrap="truncate-end">←→ / h l   select band / target</Text>
+            <Text color={PAPER} wrap="truncate-end">←→ / {keybindings.previousBand} {keybindings.nextBand}   select band / target</Text>
             <Text color={PAPER} wrap="truncate-end">↑↓         adjust active value</Text>
             <Text color={PAPER} wrap="truncate-end">mouse      drag inside a bar</Text>
             <Text color={PAPER} wrap="truncate-end">g f x      gain / frequency / Q</Text>
             <Text color={PAPER} wrap="truncate-end">p b , .    preamp / bass / step</Text>
-            <Text color={PAPER} wrap="truncate-end">e r / R    bypass / reset selected / all</Text>
-            <Text color={PAPER} wrap="truncate-end">a / d      route EQ / physical</Text>
-            <Text color={PAPER} wrap="truncate-end">s           save selected preset</Text>
+            <Text color={PAPER} wrap="truncate-end">{keybindings.toggleBypass} r / R    bypass / reset selected / all</Text>
+            <Text color={PAPER} wrap="truncate-end">{keybindings.routeEq} / {keybindings.routePhysical}      route EQ / physical</Text>
+            <Text color={PAPER} wrap="truncate-end">{keybindings.savePreset}           save selected preset</Text>
             <Text color={PAPER} wrap="truncate-end">n j k       new / switch preset</Text>
           </Box>
         ) : (
@@ -383,37 +408,41 @@ function HelpView({ width, height }: { width: number; height: number }): React.R
             <Text color={PAPER}>← →   select band                 ↑ ↓   adjust value</Text>
             <Text color={PAPER}>mouse drag a handle              set active parameter</Text>
             <Text color={PAPER}>g     gain                       f     frequency</Text>
-            <Text color={PAPER}>x     Q                          r     reset selected gain</Text>
-            <Text color={PAPER}>e     bypass selected band       R     reset all gains</Text>
+            <Text color={PAPER}>{keybindings.toggleBypass}     Q                          r     reset selected gain</Text>
+            <Text color={PAPER}>{keybindings.toggleBypass}     bypass selected band       R     reset all gains</Text>
             <Text color={PAPER}>p     focus preamp               , .   preamp ±0.1 dB</Text>
             <Text color={PAPER}>b     focus bass boost            [ ]   bass ±0.1 dB</Text>
             <Text color={PAPER}>tab   next EQ target              h/l   previous / next target</Text>
-            <Text color={PAPER}>a     route selected EQ            d     return to physical device</Text>
+            <Text color={PAPER}>{keybindings.routeEq}     route selected EQ            {keybindings.routePhysical}     return to physical device</Text>
             <Text color={PAPER}>n     new preset (or create EQ if none exists)</Text>
-            <Text color={PAPER}>s     save selected preset            j/k   switch preset</Text>
-            <Text color={PAPER}>c     rescan PipeWire              ?     close help</Text>
+            <Text color={PAPER}>{keybindings.savePreset}     save selected preset            j/k   switch preset</Text>
+            <Text color={PAPER}>c     rescan PipeWire              {keybindings.help}     close help</Text>
             <Text color={PAPER}>q     quit</Text>
           </Box>
         )}
         {!compact && <Box marginTop={2} flexDirection="column"><Text color={MUTED}>Drag a band handle vertically to change the active parameter.</Text><Text color={MUTED}>Bass Boost is a bounded {BASS_BOOST_FREQUENCY} Hz low shelf with output headroom trim.</Text></Box>}
+        {webUrl && <Box marginTop={1}><Text color={MUTED} wrap="truncate-end">Web UI: {webUrl}</Text></Box>}
         <Box marginTop={compact ? 1 : 2}><Text color={AMBER}>Press any key to return.</Text></Box>
       </Box>
     </Box>
   );
 }
 
-function Footer({ width, node, compact }: { width: number; node: PipeWireNode | undefined; compact: boolean }): React.ReactElement {
+function Footer({ width, node, compact, preset, dirty, keybindings }: { width: number; node: PipeWireNode | undefined; compact: boolean; preset: string; dirty: boolean; keybindings: PipeqSettings["ui"]["keybindings"] }): React.ReactElement {
   const innerWidth = Math.max(1, width - 4);
   const nodeWidth = compact ? 0 : Math.min(28, Math.max(14, Math.floor(innerWidth * 0.24)));
-  const hintWidth = Math.max(1, innerWidth - nodeWidth - (nodeWidth ? 2 : 0));
+  const presetWidth = Math.min(28, Math.max(12, preset.length + (dirty ? 4 : 2)));
+  const hintWidth = Math.max(1, innerWidth - nodeWidth - presetWidth - 4 - (nodeWidth ? 2 : 0));
   const hint = compact
-    ? "←→ band  ↑↓ adjust  r reset  a EQ  d out  ? help  q quit"
-    : "drag bars  ←→ band  ↑↓ adjust  r reset  g/f/x  b  a EQ  d  ? help  q quit";
+    ? `←→ band  ${keybindings.decrease}/${keybindings.increase} adj  r reset  ${keybindings.routeEq} EQ  ${keybindings.routePhysical} out  ${keybindings.help} help  q quit`
+    : `drag bars  ←→ band  ${keybindings.decrease}/${keybindings.increase} adj  r reset  g/f/x  b  ${keybindings.routeEq} EQ  ${keybindings.routePhysical}  ${keybindings.help} help  q quit`;
   return (
     <Box width={width} height={FOOTER_HEIGHT} paddingX={1} alignItems="center" borderStyle="round" borderColor={DIM}>
       <Box width={hintWidth}>
         <Text color={MUTED} wrap="truncate-end">{hint}</Text>
       </Box>
+      <Text color={DIM}> │ </Text>
+      <Box width={presetWidth}><Text color={dirty ? AMBER : PAPER} bold={dirty} wrap="truncate-end">{preset ? `${preset}${dirty ? " *" : ""}` : "no preset"}</Text></Box>
       {nodeWidth > 0 && <>
         <Text color={DIM}> │ </Text>
         <Box width={nodeWidth}><Text color={node ? GREEN : DIM} wrap="truncate-end">{node ? node.name : "waiting for PipeWire"}</Text></Box>
@@ -427,6 +456,7 @@ function App({ options }: { options: CliOptions }): React.ReactElement {
   const { stdout } = useStdout();
   const client = useMemo(() => new PipeWireClient(), []);
   const [nodes, setNodes] = useState<PipeWireNode[]>([]);
+  const [sinks, setSinks] = useState<PipeWireNode[]>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<number>();
   const selectedNodeIdRef = useRef<number | undefined>(undefined);
   const defaultNodeIdRef = useRef<number | undefined>(undefined);
@@ -456,6 +486,14 @@ function App({ options }: { options: CliOptions }): React.ReactElement {
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("ready");
+  const [webUiUrl, setWebUiUrl] = useState<string>();
+  const [settings, setSettings] = useState<PipeqSettings>(() => defaultSettings());
+  const settingsRef = useRef(settings);
+  const controlApiRef = useRef<{ getState: () => ControlState; perform: (action: ControlAction) => Promise<void> } | undefined>(undefined);
+  const controlServerRef = useRef<RunningControlServer | undefined>(undefined);
+  const trayRef = useRef<TrayController | undefined>(undefined);
+  const routedPhysicalSinkIdRef = useRef<number | undefined>(undefined);
+  const pendingAutoRouteEqIdRef = useRef<number | undefined>(undefined);
   const [view, setView] = useState<View>("editor");
   const [creating, setCreating] = useState(false);
   const draggingRef = useRef<number | undefined>(undefined);
@@ -466,25 +504,35 @@ function App({ options }: { options: CliOptions }): React.ReactElement {
   const activeWritesRef = useRef(new Set<number>());
 
   const node = nodes.find((candidate) => candidate.id === selectedNodeId);
+  settingsRef.current = settings;
 
   const reconcileExternalDefault = useCallback(async (previousDefaultId: number, nextDefaultId: number, discovered: PipeWireNode[]) => {
     if (volumeTransitionRef.current || previousDefaultId === nextDefaultId) return;
     const previousEq = discovered.find((candidate) => candidate.id === previousDefaultId && buildBands(candidate.params).length > 0);
     const nextEq = discovered.find((candidate) => candidate.id === nextDefaultId && buildBands(candidate.params).length > 0);
-    if (!previousEq && !nextEq) return;
+    const selectedEq = nextEq ?? previousEq;
+    const action = selectedEq ? externalRouteAction(previousDefaultId, nextDefaultId, selectedEq.id, settings.audio.autoRouteOnDeviceChange) : "none";
+    if (action === "none" || !selectedEq) return;
 
     volumeTransitionRef.current = true;
     try {
-      const bridgeEq = nextEq ?? previousEq;
-      const physicalSinkId = bridgeEq ? await client.findPhysicalSinkForFilter("effect_output.pipeq-default") : undefined;
+      if (action === "route-eq" && previousEq && settings.audio.autoRouteOnDeviceChange) pendingAutoRouteEqIdRef.current = selectedEq.id;
+      const physicalSinkId = await client.findPhysicalSinkForFilter("effect_output.pipeq-default");
       if (physicalSinkId === undefined) return;
-      if (nextEq && previousDefaultId !== physicalSinkId) return;
-      if (previousEq && nextDefaultId !== physicalSinkId) return;
-      if (nextEq) {
-        await client.switchDefaultToEq(nextEq.id, "effect_output.pipeq-default", previousDefaultId);
+      if (action === "route-eq") {
+        if (previousDefaultId !== selectedEq.id && physicalSinkId !== nextDefaultId && previousEq) {
+          setMessage("waiting for PipeWire to connect the new output");
+          return;
+        }
+        await client.switchDefaultToEq(selectedEq.id, "effect_output.pipeq-default", previousDefaultId === selectedEq.id ? physicalSinkId : previousDefaultId);
+        routedPhysicalSinkIdRef.current = await client.findPhysicalSinkForFilter("effect_output.pipeq-default");
+        pendingAutoRouteEqIdRef.current = undefined;
+        defaultNodeIdRef.current = selectedEq.id;
+        setDefaultNodeId(selectedEq.id);
         setMessage("EQ volume restored safely");
-      } else if (previousEq) {
+      } else if (action === "route-physical" && previousEq) {
         await client.switchDefaultToPhysical(previousEq.id, "effect_output.pipeq-default", previousDefaultId);
+        routedPhysicalSinkIdRef.current = undefined;
         setMessage("physical volume restored safely");
       }
     } catch (cause) {
@@ -492,21 +540,64 @@ function App({ options }: { options: CliOptions }): React.ReactElement {
     } finally {
       volumeTransitionRef.current = false;
     }
-  }, [client]);
+  }, [client, settings.audio.autoRouteOnDeviceChange]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const [discovered, defaultId] = await Promise.all([
+      const [discovered, defaultId, discoveredSinks] = await Promise.all([
         client.findEqNodes(),
         client.getDefaultAudioSinkId().catch(() => undefined),
+        client.findAudioSinks().catch(() => []),
       ]);
       const previousDefaultId = defaultNodeIdRef.current;
       defaultNodeIdRef.current = defaultId;
       if (previousDefaultId !== undefined && defaultId !== undefined && previousDefaultId !== defaultId) {
         void reconcileExternalDefault(previousDefaultId, defaultId, discovered);
       }
+      const activeEq = discovered.find((candidate) => candidate.id === defaultId && buildBands(candidate.params).length > 0);
+      const pendingEqId = pendingAutoRouteEqIdRef.current;
+      if (pendingEqId !== undefined && defaultId !== pendingEqId && !volumeTransitionRef.current && settings.audio.autoRouteOnDeviceChange) {
+        const pendingEq = discovered.find((candidate) => candidate.id === pendingEqId && buildBands(candidate.params).length > 0);
+        const linkedSinkId = await client.findPhysicalSinkForFilter("effect_output.pipeq-default").catch(() => undefined);
+        if (pendingEq && linkedSinkId !== undefined && linkedSinkId === defaultId) {
+          volumeTransitionRef.current = true;
+          try {
+            await client.switchDefaultToEq(pendingEq.id, "effect_output.pipeq-default", linkedSinkId);
+            routedPhysicalSinkIdRef.current = linkedSinkId;
+            pendingAutoRouteEqIdRef.current = undefined;
+            defaultNodeIdRef.current = pendingEq.id;
+            setDefaultNodeId(pendingEq.id);
+            setMessage("output changed; PipeQ stayed in playback");
+          } catch (cause) {
+            setMessage(cause instanceof Error ? cause.message : "Could not restore PipeQ after an output change.");
+          } finally {
+            volumeTransitionRef.current = false;
+          }
+        }
+      }
+      if (activeEq && !volumeTransitionRef.current) {
+        const linkedSinkId = await client.findPhysicalSinkForFilter("effect_output.pipeq-default").catch(() => undefined);
+        const previousPhysicalId = routedPhysicalSinkIdRef.current;
+        if (linkedSinkId !== undefined && previousPhysicalId !== undefined && linkedSinkId !== previousPhysicalId && settings.audio.autoRouteOnDeviceChange) {
+          volumeTransitionRef.current = true;
+          try {
+            await client.switchDefaultToEq(activeEq.id, "effect_output.pipeq-default", linkedSinkId);
+            routedPhysicalSinkIdRef.current = linkedSinkId;
+            setMessage("output device changed; PipeQ route restored");
+          } catch (cause) {
+            setMessage(cause instanceof Error ? cause.message : "Could not restore PipeQ after an output change.");
+          } finally {
+            volumeTransitionRef.current = false;
+          }
+        } else if (linkedSinkId !== undefined && previousPhysicalId === undefined) {
+          routedPhysicalSinkIdRef.current = linkedSinkId;
+        }
+      } else if (defaultId !== undefined && !discovered.some((candidate) => candidate.id === defaultId && buildBands(candidate.params).length > 0) && previousDefaultId !== defaultId) {
+        routedPhysicalSinkIdRef.current = undefined;
+      }
       setNodes(discovered);
+      setSinks(discoveredSinks);
       setDefaultNodeId(defaultId);
       const requested = options.requestedNode ? discovered.find((candidate) => String(candidate.id) === options.requestedNode || candidate.name.toLowerCase() === options.requestedNode?.toLowerCase() || candidate.description.toLowerCase() === options.requestedNode?.toLowerCase()) : undefined;
       const next = requested ?? discovered.find((candidate) => candidate.id === selectedNodeIdRef.current) ?? discovered[0];
@@ -538,6 +629,16 @@ function App({ options }: { options: CliOptions }): React.ReactElement {
     return () => {
       active = false;
     };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void loadSettings().then((stored) => {
+      if (!active) return;
+      applyPalette(stored.ui);
+      setSettings(stored);
+    }).catch((cause) => setMessage(cause instanceof Error ? cause.message : "Could not load PipeQ settings."));
+    return () => { active = false; };
   }, []);
 
   useEffect(() => {
@@ -755,7 +856,9 @@ function App({ options }: { options: CliOptions }): React.ReactElement {
     setMessage("routing EQ and preserving volume");
     volumeTransitionRef.current = true;
     try {
-      await client.switchDefaultToEq(node.id);
+      pendingAutoRouteEqIdRef.current = undefined;
+      const physicalSinkId = await client.switchDefaultToEq(node.id);
+      routedPhysicalSinkIdRef.current = physicalSinkId;
       defaultNodeIdRef.current = node.id;
       setDefaultNodeId(node.id);
       setMessage("EQ active; volume preserved");
@@ -771,7 +874,9 @@ function App({ options }: { options: CliOptions }): React.ReactElement {
     setMessage("returning volume to the physical device");
     volumeTransitionRef.current = true;
     try {
+      pendingAutoRouteEqIdRef.current = undefined;
       const physicalSinkId = await client.switchDefaultToPhysical(node.id);
+      routedPhysicalSinkIdRef.current = undefined;
       defaultNodeIdRef.current = physicalSinkId;
       setDefaultNodeId(physicalSinkId);
       setMessage("physical device active; volume preserved");
@@ -781,6 +886,131 @@ function App({ options }: { options: CliOptions }): React.ReactElement {
       volumeTransitionRef.current = false;
     }
   }, [client, node]);
+
+  const selectOutput = useCallback(async (outputId: number) => {
+    const selectedEq = nodes.find((candidate) => candidate.id === selectedNodeIdRef.current);
+    if (!sinks.some((sink) => sink.id === outputId)) throw new Error("That output device is no longer available.");
+    if (!volumeTransitionRef.current) {
+      volumeTransitionRef.current = true;
+      try {
+        const keepEq = Boolean(selectedEq && defaultNodeIdRef.current === selectedEq.id && settingsRef.current.audio.autoRouteOnDeviceChange);
+        if (!keepEq || !selectedEq) {
+          await client.setDefaultAudioSink(outputId);
+          routedPhysicalSinkIdRef.current = undefined;
+        } else {
+          await client.setDefaultAudioSink(outputId);
+          let linkedSinkId: number | undefined;
+          for (let attempt = 0; attempt < 20; attempt += 1) {
+            linkedSinkId = await client.findPhysicalSinkForFilter("effect_output.pipeq-default").catch(() => undefined);
+            if (linkedSinkId === outputId) break;
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          }
+          if (linkedSinkId !== outputId) throw new Error("PipeWire did not connect the EQ to that output.");
+          const physicalSinkId = await client.switchDefaultToEq(selectedEq.id, "effect_output.pipeq-default", outputId);
+          routedPhysicalSinkIdRef.current = physicalSinkId;
+          defaultNodeIdRef.current = selectedEq.id;
+          setDefaultNodeId(selectedEq.id);
+        }
+        setMessage("output device changed safely");
+      } finally {
+        volumeTransitionRef.current = false;
+      }
+    }
+    await refresh();
+  }, [client, nodes, refresh, sinks]);
+
+  const performControlAction = useCallback(async (action: ControlAction) => {
+    if (action.type === "preset") {
+      const preset = presets.find((candidate) => candidate.id === action.id);
+      if (!preset) throw new Error("That preset is no longer available.");
+      applyPreset(preset);
+      return;
+    }
+    if (action.type === "output") return selectOutput(action.id);
+    if (action.type === "route") return action.enabled ? routeSelectedEq() : routePhysicalSink();
+    if (action.type === "bass") return applyBassBoost(action.value);
+    if (action.type === "preamp") return applyPreamp(action.value);
+    if (action.type === "settings") {
+      const next = await saveSettings(action.value);
+      if (!next.audio.autoRouteOnDeviceChange) pendingAutoRouteEqIdRef.current = undefined;
+      applyPalette(next.ui);
+      setSettings(next);
+      setMessage("preferences saved");
+      return;
+    }
+    const bandIndex = bandsRef.current.findIndex((band) => band.name === action.name);
+    const band = bandsRef.current[bandIndex];
+    if (band && node) applyBand(bandIndex, updateBand(band, action.parameter === "freq" ? "Freq" : action.parameter === "gain" ? "Gain" : "Q", action.value));
+  }, [applyBand, applyBassBoost, applyPreamp, applyPreset, node, presets, routePhysicalSink, routeSelectedEq, selectOutput]);
+
+  controlApiRef.current = {
+    getState: () => {
+      const selectedOutputId = node && node.id === defaultNodeId ? routedPhysicalSinkIdRef.current : defaultNodeId;
+      return {
+        nodes: nodes.map(({ id, name, description }) => ({ id, name, description })),
+        sinks: sinks.map(({ id, name, description }) => ({ id, name, description })),
+        presets: presets.map(({ id, name }) => ({ id, name })),
+        ...(selectedNodeId !== undefined ? { selectedNodeId } : {}),
+        ...(defaultNodeId !== undefined ? { defaultNodeId } : {}),
+        ...(selectedOutputId !== undefined ? { selectedOutputId } : {}),
+        ...(selectedPresetId ? { selectedPresetId } : {}),
+        presetDirty,
+        enabled: Boolean(node && node.id === defaultNodeId),
+        bands: bands.map(({ name, freq, gain, q, enabled }) => ({ name, freq, gain, q, ...(enabled !== undefined ? { enabled } : {}) })),
+        bassBoost,
+        preamp,
+        accent: settings.ui.accent,
+        settings,
+      };
+    },
+    perform: performControlAction,
+  };
+
+  useEffect(() => {
+    let active = true;
+    void startControlServer({
+      getState: () => controlApiRef.current?.getState() ?? { nodes: [], sinks: [], presets: [], presetDirty: false, enabled: false, bands: [], bassBoost: 0, preamp: 0, accent: "#F3B562", settings: defaultSettings() },
+      perform: (action) => controlApiRef.current ? controlApiRef.current.perform(action) : Promise.reject(new Error("PipeQ is starting.")),
+    }).then(async (server) => {
+      if (!active) { await server.close(); return; }
+      controlServerRef.current = server;
+      setWebUiUrl(server.url);
+      setMessage(`Web UI ${server.url}`);
+      const tray = await startTray({
+        getState: () => {
+          const state = controlApiRef.current!.getState();
+          const outputId = state.enabled ? routedPhysicalSinkIdRef.current : state.defaultNodeId;
+          return {
+            enabled: state.enabled,
+            presets: state.presets.map(({ id, name }) => ({ id, label: name })),
+            outputs: state.sinks.map(({ id, description }) => ({ id: String(id), label: description })),
+            ...(state.selectedPresetId ? { selectedPresetId: state.selectedPresetId } : {}),
+            ...(outputId !== undefined ? { selectedOutputId: String(outputId) } : {}),
+          };
+        },
+        setEnabled: (enabled) => controlApiRef.current!.perform({ type: "route", enabled }),
+        selectPreset: (id) => controlApiRef.current!.perform({ type: "preset", id }),
+        selectOutput: (id) => controlApiRef.current!.perform({ type: "output", id: Number(id) }),
+        openWebUi: () => {
+          const child = spawn("xdg-open", [server.url], { detached: true, stdio: "ignore" });
+          child.once("error", (cause) => { if (active) setMessage(`Could not open browser: ${cause.message}`); });
+          child.unref();
+        },
+        quit: () => exit(),
+        onError: (cause) => { if (active) setMessage(cause.message); },
+      });
+      if (!active) await tray.stop(); else trayRef.current = tray;
+    }).catch((cause) => { if (active) setMessage(cause instanceof Error ? `Local UI unavailable: ${cause.message}` : "Local UI unavailable"); });
+    return () => {
+      active = false;
+      void trayRef.current?.stop();
+      trayRef.current = undefined;
+      if (controlServerRef.current) void controlServerRef.current.close();
+      controlServerRef.current = undefined;
+    };
+  }, [exit]);
+
+  useEffect(() => { void trayRef.current?.update(); }, [nodes, sinks, presets, selectedPresetId, presetDirty, defaultNodeId, selectedNodeId, settings, bands, bassBoost, preamp]);
 
   const updateChartMetrics = useCallback((metrics: ElementMetrics) => {
     setChartMetrics((previous) => {
@@ -964,7 +1194,10 @@ function App({ options }: { options: CliOptions }): React.ReactElement {
     setCreating(true);
     setMessage("installing default EQ");
     try {
-      const created = await client.installDefaultEq();
+      const created = await client.installDefaultEq({
+        preamp: settingsRef.current.audio.defaultPreamp,
+        bassBoost: settingsRef.current.audio.defaultBassBoost,
+      });
       if (!created) throw new Error("PipeWire restarted, but the new EQ target did not appear.");
       setView("editor");
       setMessage("default EQ active");
@@ -1009,7 +1242,7 @@ function App({ options }: { options: CliOptions }): React.ReactElement {
       exit();
       return;
     }
-    if (input === "?") {
+    if (input === settings.ui.keybindings.help) {
       setView("help");
       return;
     }
@@ -1017,15 +1250,15 @@ function App({ options }: { options: CliOptions }): React.ReactElement {
       beginPresetAction();
       return;
     }
-    if (input === "s") {
+    if (input === settings.ui.keybindings.savePreset) {
       void saveSelectedPreset();
       return;
     }
-    if (input === "a") {
+    if (input === settings.ui.keybindings.routeEq) {
       void routeSelectedEq();
       return;
     }
-    if (input === "d") {
+    if (input === settings.ui.keybindings.routePhysical) {
       void routePhysicalSink();
       return;
     }
@@ -1045,6 +1278,16 @@ function App({ options }: { options: CliOptions }): React.ReactElement {
       applyPreamp(preampRef.current + (input === "." ? PREAMP_STEP : -PREAMP_STEP));
       return;
     }
+    if (input === settings.ui.keybindings.increase || input === settings.ui.keybindings.decrease) {
+      const direction = input === settings.ui.keybindings.increase ? 1 : -1;
+      if (controlFocus === "bass") applyBassBoost(bassBoostRef.current + direction * BASS_BOOST_STEP);
+      else if (controlFocus === "preamp") applyPreamp(preampRef.current + direction * PREAMP_STEP);
+      else {
+        const current = bandsRef.current[selectedBandRef.current];
+        if (current) applyBand(selectedBandRef.current, stepBand(current, parameter, direction));
+      }
+      return;
+    }
     if (input === "c") {
       setMessage("scanning PipeWire");
       void refresh();
@@ -1059,14 +1302,16 @@ function App({ options }: { options: CliOptions }): React.ReactElement {
       setParameter(input === "g" ? "Gain" : input === "f" ? "Freq" : "Q");
       return;
     }
-    if (input === "h" || key.leftArrow) {
-      if (input === "h") chooseNextNode(-1);
-      else chooseBand((selectedBandRef.current - 1 + bands.length) % Math.max(1, bands.length));
+    if (input === settings.ui.keybindings.previousBand || key.leftArrow) {
+      chooseBand((selectedBandRef.current - 1 + bands.length) % Math.max(1, bands.length));
       return;
     }
-    if (input === "l" || key.rightArrow) {
-      if (input === "l") chooseNextNode(1);
-      else chooseBand((selectedBandRef.current + 1) % Math.max(1, bands.length));
+    if (input === settings.ui.keybindings.nextBand || key.rightArrow) {
+      chooseBand((selectedBandRef.current + 1) % Math.max(1, bands.length));
+      return;
+    }
+    if (input === "h" || input === "l") {
+      chooseNextNode(input === "h" ? -1 : 1);
       return;
     }
     if ((input === "j" || input === "k") && presets.length) {
@@ -1099,7 +1344,7 @@ function App({ options }: { options: CliOptions }): React.ReactElement {
       }
       return;
     }
-    if (input === "e") {
+    if (input === settings.ui.keybindings.toggleBypass) {
       toggleBand(selectedBandRef.current);
       return;
     }
@@ -1118,7 +1363,7 @@ function App({ options }: { options: CliOptions }): React.ReactElement {
   // The sidebar needs a tall frame to show presets, targets, and metadata
   // without stealing rows from the editor. On shorter terminals the editor
   // gets the full width instead of allowing either column to overflow.
-  const compact = width < 96 || height < 40;
+  const compact = settings.ui.compactLayout === "always" || (settings.ui.compactLayout === "auto" && (width < 96 || height < 40));
   const dense = height < 30;
   const showNodeTitle = !dense;
   const showDetails = height >= 34;
@@ -1135,12 +1380,12 @@ function App({ options }: { options: CliOptions }): React.ReactElement {
 
   if (view === "new-eq") return <NewEqDialog width={width} busy={creating} onCancel={() => setView("editor")} onConfirm={() => void createDefaultEq()} />;
   if (view === "save-preset") return <SavePresetDialog width={width} name={presetName} busy={savingPreset} />;
-  if (view === "help") return <HelpView width={width} height={height} />;
+  if (view === "help") return <HelpView width={width} height={height} webUrl={webUiUrl} keybindings={settings.ui.keybindings} />;
 
   return (
     <Box width={width} height={terminalRows} flexDirection="column" justifyContent="flex-start">
       <Box width={width} height={height} flexDirection="column">
-        <Header width={width} node={node} isDefault={node?.id === defaultNodeId} message={message} />
+        <Header width={width} node={node} isDefault={node?.id === defaultNodeId} message={message} preset={presets.find((preset) => preset.id === selectedPresetId)?.name ?? ""} dirty={presetDirty} />
         <Box width={width} height={mainHeight} flexShrink={0} flexDirection="row">
           {!compact && <Sidebar width={sidebarWidth} height={mainHeight} nodes={nodes} selectedNodeId={selectedNodeId} presets={presets} selectedPresetId={selectedPresetId} presetDirty={presetDirty} onPresetMetrics={updatePresetMetrics} />}
           <Box width={editorWidth} height={mainHeight} flexDirection="column" paddingX={2} paddingY={editorPaddingY}>
@@ -1164,7 +1409,7 @@ function App({ options }: { options: CliOptions }): React.ReactElement {
             ) : <EmptyState error={error} loading={loading} width={editorWidth} canCreateEq={nodes.length === 0} />}
           </Box>
         </Box>
-        <Footer width={width} node={node} compact={compactFooter} />
+        <Footer width={width} node={node} compact={compactFooter} preset={presets.find((preset) => preset.id === selectedPresetId)?.name ?? ""} dirty={presetDirty} keybindings={settings.ui.keybindings} />
       </Box>
     </Box>
   );
