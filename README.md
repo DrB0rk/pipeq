@@ -12,6 +12,10 @@ The UI is built with React and [Ink](https://github.com/vadimdemedes/ink). Audio
 - Per-band bypass with `e`; bypass keeps the band’s settings intact.
 - Keyboard, mouse drag, and mouse wheel interaction.
 - Saved presets for bands, bypass state, bass boost, and preamp.
+- A desktop tray menu for presets, output devices, PipeQ routing, and browser controls.
+- A localhost web UI for live EQ, preset, output-device, and preference controls.
+- Automatic safe routing through PipeQ when the system default output changes.
+- Persistent theme, accent, layout, keybinding, auto-routing, and new-EQ defaults.
 - Safe EQ/device routing with fades, mute protection, volume preservation, and a 99% physical-output ceiling.
 - Responsive, top-anchored Ink layout that stays usable in smaller terminals.
 
@@ -138,6 +142,45 @@ Presets are stored locally at:
 ```
 
 Press `n` with an EQ loaded to create a named preset. Select a preset in the sidebar, change the sound, and press `s` to save that preset immediately. Presets are intentionally local and are not written into the repository.
+
+## Desktop controls and customization
+
+The TUI starts a web control page on a random localhost port and shows its URL in the header. The tray menu includes **Open web UI**, preset selection, output-device selection, PipeQ enable/bypass, and quit actions. The tray and web page control the same running PipeQ process as the TUI. The web listener binds only to `127.0.0.1`; it does not accept connections from other machines.
+
+PipeQ uses the freedesktop StatusNotifierItem tray protocol. KDE Plasma supports this directly. GNOME Shell needs an AppIndicator/KStatusNotifierItem extension for tray visibility. If no desktop tray watcher is present, PipeQ remains usable from the TUI and browser. `xdg-open` opens the browser from the tray.
+
+Settings live in `~/.config/pipeq/settings.json` (or `$XDG_CONFIG_HOME/pipeq/settings.json`). The file is optional; absent values use safe defaults. For example:
+
+```json
+{
+  "version": 1,
+  "ui": {
+    "theme": "dark",
+    "accent": "#F3B562",
+    "compactLayout": "auto",
+    "keybindings": {
+      "previousBand": "H",
+      "nextBand": "L",
+      "decrease": "-",
+      "increase": "+",
+      "toggleBypass": "e",
+      "routeEq": "a",
+      "routePhysical": "d",
+      "savePreset": "s",
+      "help": "?"
+    }
+  },
+  "audio": {
+    "autoRouteOnDeviceChange": true,
+    "defaultPreamp": 0,
+    "defaultBassBoost": 0
+  }
+}
+```
+
+`theme` accepts `system`, `dark`, or `light`; `compactLayout` accepts `auto`, `always`, or `never`. Keybindings are one non-whitespace character. The web UI can edit theme, accent, layout, keybindings, automatic device routing, and new-EQ audio defaults, then save them immediately. Audio defaults apply when PipeQ creates a new filter-chain graph; existing graphs and presets are left unchanged.
+
+While automatic routing is enabled, changing the system output while PipeQ is active causes PipeQ to return to the playback path after PipeWire attaches the EQ to the new physical sink. Press `d` to bypass PipeQ explicitly; that in-app choice is kept.
 
 ## Audio safety and routing
 

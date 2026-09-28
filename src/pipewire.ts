@@ -27,6 +27,14 @@ export type VolumeState = {
 };
 
 export type VolumeTarget = "eq" | "physical";
+export type ExternalRouteAction = "none" | "route-eq" | "route-physical";
+
+/** Decide what to do when the system default changes outside an in-app transition. */
+export function externalRouteAction(previousDefaultId: number, nextDefaultId: number, eqNodeId: number, autoRouteOnDeviceChange: boolean): ExternalRouteAction {
+  if (previousDefaultId === nextDefaultId || (previousDefaultId !== eqNodeId && nextDefaultId !== eqNodeId)) return "none";
+  if (previousDefaultId === eqNodeId) return autoRouteOnDeviceChange ? "route-eq" : "route-physical";
+  return "route-eq";
+}
 
 const VOLUME_FADE_STEPS = 8;
 const VOLUME_FADE_DELAY_MS = 10;
@@ -123,15 +131,19 @@ function quoteConfigString(value: string): string {
   return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 }
 
-export function buildDefaultEqConfig(): string {
+export function buildDefaultEqConfig(settings: { preamp?: number; bassBoost?: number } = {}): string {
+  const defaultPreamp = Math.min(PREAMP_MAX, Math.max(PREAMP_MIN, settings.preamp ?? 0));
+  const defaultBassBoost = Math.min(BASS_BOOST_MAX, Math.max(BASS_BOOST_MIN, settings.bassBoost ?? BASS_BOOST_MIN));
+  const flatBands = buildBands(Object.fromEntries(EQ_FREQUENCIES.flatMap((frequency, index) => [[`eq${index + 1}:Freq`, frequency], [`eq${index + 1}:Gain`, 0], [`eq${index + 1}:Q`, 0.7]])));
+  const initialTrim = headroomTrimForBands(flatBands, defaultBassBoost, defaultPreamp);
   const eqNodes = EQ_FREQUENCIES.map((frequency, index) => {
     const name = `eq${index + 1}`;
     return `{ type = builtin name = ${name} label = bq_peaking control = { Freq = ${frequency} Q = 0.7 Gain = 0.0 } }`;
   }).join("\n        ");
   const nodes = [
-    `{ type = builtin name = preamp label = linear control = { Mult = 1.0 Add = 0.0 } }`,
-    `{ type = builtin name = bass label = bq_lowshelf control = { Freq = ${BASS_BOOST_FREQUENCY} Q = ${BASS_BOOST_Q} Gain = ${BASS_BOOST_MIN} } }`,
-    `{ type = builtin name = bass_trim label = linear control = { Mult = 1.0 Add = 0.0 } }`,
+    `{ type = builtin name = preamp label = linear control = { Mult = ${preampMultiplierForDb(defaultPreamp).toFixed(8)} Add = 0.0 } }`,
+    `{ type = builtin name = bass label = bq_lowshelf control = { Freq = ${BASS_BOOST_FREQUENCY} Q = ${BASS_BOOST_Q} Gain = ${defaultBassBoost.toFixed(2)} } }`,
+    `{ type = builtin name = bass_trim label = linear control = { Mult = ${initialTrim.toFixed(8)} Add = 0.0 } }`,
     eqNodes,
   ].join("\n        ");
   const links = [
@@ -183,6 +195,10 @@ export class PipeWireClient {
   async findEqNodes(): Promise<PipeWireNode[]> {
     const nodes = await this.dumpNodes();
     return nodes.filter(isEqNode);
+  }
+
+  async findAudioSinks(): Promise<PipeWireNode[]> {
+    return (await this.dumpNodes()).filter((node) => node.mediaClass === "Audio/Sink" && !isEqNode(node));
   }
 
   async getDefaultAudioSinkId(): Promise<number | undefined> {
@@ -371,13 +387,13 @@ export class PipeWireClient {
     return stop;
   }
 
-  async installDefaultEq(): Promise<PipeWireNodeSummary | undefined> {
+  async installDefaultEq(settings: { preamp?: number; bassBoost?: number } = {}): Promise<PipeWireNodeSummary | undefined> {
     const userHome = homedir();
     const configHome = process.env.XDG_CONFIG_HOME || join(userHome, ".config");
     const configDirectory = join(configHome, "pipewire", "pipewire.conf.d");
     const configPath = join(configDirectory, DEFAULT_EQ_CONFIG_PATH);
     await mkdir(configDirectory, { recursive: true });
-    await writeFile(configPath, buildDefaultEqConfig(), "utf8");
+    await writeFile(configPath, buildDefaultEqConfig(settings), "utf8");
     await execFileAsync("systemctl", ["--user", "restart", "pipewire"]);
 
     for (let attempt = 0; attempt < 10; attempt += 1) {

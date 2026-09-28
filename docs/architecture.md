@@ -11,17 +11,23 @@ PipeWireClient
     |
     | bounded control writes through pw-cli
     v
-Ink App state
+PipeQ process state
     |
-    +-- custom sliders, band bars, dialogs, help
-    +-- local preset persistence
+    +-- Ink TUI
+    +-- localhost HTTP control page (127.0.0.1 only)
+    +-- optional StatusNotifierItem/dbusmenu tray
+    +-- local preset and settings persistence
 ```
 
 PipeQ keeps the audio graph in PipeWire. Node.js is a control plane only: it reads metadata and sends parameter updates. This avoids an extra PCM processing hop and keeps PipeWire’s negotiated format intact.
 
 ## Refresh and selection
 
-Discovery runs periodically and reacts to default-sink monitor events. Selection is stored in refs as well as React state so refreshes do not move the user’s band or target unexpectedly. Pending writes are coalesced per node; the newest state wins while an earlier PipeWire command is in flight.
+Discovery runs periodically and reacts to default-sink monitor events. The TUI, browser, and tray dispatch actions into the same React-owned process state and PipeWire client. The browser server binds explicitly to loopback, checks Host and Origin, requires a process-scoped token for mutations, and sends no CORS headers. Selection is stored in refs as well as React state so refreshes do not move the user’s band or target unexpectedly. Pending writes are coalesced per node; the newest state wins while an earlier PipeWire command is in flight.
+
+When an external default change moves playback from the EQ to a physical sink, the process treats it as a device change while automatic routing is enabled and safely restores the EQ as default after the physical link is available. In-app bypass transitions mark the route as intentional and are not undone by their own PipeWire monitor events. If PipeWire has not connected a newly selected sink yet, PipeQ keeps a pending route and retries during discovery.
+
+The optional tray exports a freedesktop StatusNotifierItem and dbusmenu on the user session bus. Missing desktop tray support does not affect PipeWire, TUI, or web controls.
 
 ## Safety model
 
