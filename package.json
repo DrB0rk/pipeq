@@ -1,6 +1,6 @@
 {
   "name": "pipeq",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A quality-first realtime PipeWire parametric EQ TUI for Linux.",
   "type": "module",
   "license": "MIT",

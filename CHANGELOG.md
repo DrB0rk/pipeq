@@ -8,6 +8,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 No unreleased changes.
 
+## [0.3.0] - 2026-09-28
+
+### Added
+
+- Desktop tray controls for PipeQ routing, presets, output devices, and the local web UI.
+- Automatic routing to newly selected system audio devices while PipeQ remains active.
+- Local web controls for playback, presets, EQ bands, and preferences.
+- Customizable UI themes, accent color, layout, keybindings, routing behavior, and defaults for new EQ graphs.
+- Selected-preset and unsaved-change status in the TUI.
+
 ## [0.2.0] - 2026-09-21
 
 ### Added
@@ -27,6 +37,7 @@ No unreleased changes.
 - Safe EQ/physical-device routing with fades and volume preservation.
 - Open-source project policy, CI, release automation, and contributor guidance.
 
-[Unreleased]: https://github.com/DrB0rk/pipeq/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/DrB0rk/pipeq/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/DrB0rk/pipeq/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/DrB0rk/pipeq/releases/tag/v0.2.0
 [0.1.0]: https://github.com/DrB0rk/pipeq/releases/tag/v0.1.0
