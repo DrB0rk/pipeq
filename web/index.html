@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en" data-token="__TOKEN__" data-accent="__ACCENT__">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>PipeQ · Equalizer</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="#main" aria-label="PipeQ home"><span class="brand-mark" aria-hidden="true">π</span><span>PIPEQ</span><span class="brand-divider">/</span><span class="brand-section">Equalizer</span></a>
+      <div class="topbar-state"><span class="connection-indicator"><span class="live-dot connecting" id="liveDot"></span><span id="connectionState" role="status" aria-live="polite">Connecting</span></span><span id="routeState" class="status-pill" role="status" aria-live="polite">Checking playback route</span></div>
+      <div class="topbar-actions"><span id="saveState" class="save-state"></span><button id="savePreset" class="button quiet" type="button" aria-label="Save current preset"><span class="save-wide">Save preset</span><span class="save-compact" aria-hidden="true">Save</span></button><button id="refresh" class="icon-button" type="button" aria-label="Refresh audio state" title="Refresh">↻</button></div>
+    </header>
+
+    <aside class="rail" aria-label="Playback and presets">
+      <section class="rail-section">
+        <div class="rail-label">Playback</div>
+        <label class="field-label" for="output">Output device</label>
+        <select id="output" class="select-control" aria-label="Output device"><option value="">Finding output devices…</option></select>
+        <button id="route" class="route-button" type="button">Loading…</button>
+      </section>
+      <section class="rail-section presets-section">
+        <div class="rail-heading"><div class="rail-label">Presets</div><div class="rail-heading-actions"><span id="presetCount" class="count"></span><button id="newPreset" class="add-button" type="button" aria-label="Create preset" title="Create preset">+</button></div></div>
+        <div id="presetList" class="preset-list" aria-label="Saved presets"></div>
+      </section>
+      <section class="rail-section quick-section">
+        <div class="rail-label">Master tone</div>
+        <label class="control-label" for="preamp"><span>Preamp</span><output id="preampValue"></output></label>
+        <input id="preamp" class="range-control" type="range" min="-24" max="6" step="0.1">
+        <label class="control-label" for="bass"><span>Bass shelf</span><output id="bassValue"></output></label>
+        <input id="bass" class="range-control" type="range" min="0" max="9" step="0.1">
+      </section>
+      <details class="preferences" id="preferences">
+        <summary>Preferences</summary>
+        <div class="preference-content">
+          <label class="field-label" for="theme">Theme</label>
+          <select id="theme" class="select-control"><option value="system">System</option><option value="dark">Dark</option><option value="light">Light</option></select>
+          <label class="field-label" for="accentSetting">Accent color</label><input id="accentSetting" class="color-control" type="color">
+          <label class="field-label" for="compactSetting">TUI layout</label>
+          <select id="compactSetting" class="select-control"><option value="auto">Automatic</option><option value="always">Compact</option><option value="never">Full</option></select>
+          <label class="check-label"><input id="autoRouteSetting" type="checkbox"><span>Keep PipeQ active when outputs change</span></label>
+          <label class="field-label" for="defaultPreamp">New EQ preamp · dB</label><input id="defaultPreamp" class="number-control" type="number" min="-24" max="6" step="0.1">
+          <label class="field-label" for="defaultBass">New EQ bass · dB</label><input id="defaultBass" class="number-control" type="number" min="0" max="9" step="0.1">
+          <div class="settings-subheading">TUI keyboard shortcuts</div>
+          <p class="settings-help">These shortcuts apply in the PipeQ terminal interface.</p>
+          <div class="key-grid">
+            <label>Prev band<input id="keyPreviousBand" maxlength="1"></label><label>Next band<input id="keyNextBand" maxlength="1"></label>
+            <label>Decrease<input id="keyDecrease" maxlength="1"></label><label>Increase<input id="keyIncrease" maxlength="1"></label>
+            <label>Toggle band<input id="keyToggleBypass" maxlength="1"></label><label>Route PipeQ<input id="keyRouteEq" maxlength="1"></label>
+            <label>Route device<input id="keyRoutePhysical" maxlength="1"></label><label>Save preset<input id="keySavePreset" maxlength="1"></label>
+            <label>Help<input id="keyHelp" maxlength="1"></label>
+          </div>
+          <button id="saveSettings" class="button save-settings" type="button">Save preferences</button>
+        </div>
+      </details>
+      <div class="rail-foot"><span class="key-cap">i</span> Keep PipeQ running in its terminal for live audio control</div>
+    </aside>
+
+    <dialog id="newPresetDialog" class="preset-dialog">
+      <form id="newPresetForm" method="dialog">
+        <div class="eyebrow">SAVE CURRENT SOUND</div>
+        <h2>New preset</h2>
+        <p>Save the current filter chain so you can recall it later.</p>
+        <label class="field-label" for="newPresetName">Preset name</label>
+        <input id="newPresetName" class="select-control" type="text" maxlength="48" placeholder="e.g. Evening listening" required>
+        <div class="dialog-actions"><button id="cancelNewPreset" class="button" type="button">Cancel</button><button class="button confirm-button" type="submit">Save preset</button></div>
+      </form>
+    </dialog>
+
+    <main id="main" class="workspace">
+      <div class="page-heading">
+        <div><div class="eyebrow">REALTIME FILTER CHAIN</div><h1 id="targetTitle">PipeQ Equalizer</h1><div id="targetSubtitle" class="subtitle">Waiting for an EQ target</div></div>
+        <div class="heading-meta"><span class="meta-label">Active preset</span><strong id="activePreset">—</strong><span id="dirtyTag" class="dirty-tag" hidden>Unsaved changes</span></div>
+      </div>
+
+      <section class="graph-panel" aria-labelledby="responseHeading">
+        <div class="panel-heading">
+          <div><h2 id="responseHeading">Frequency response</h2><p>Calculated at 48 kHz. Drag a point to adjust frequency and gain, or use the exact filter controls.</p></div>
+          <div class="graph-legend"><span><i class="legend-line response-line"></i>Total response</span><span><i class="legend-line selected-line"></i>Selected band</span></div>
+        </div>
+        <div class="graph-wrap" id="graphWrap"><svg id="eqGraph" viewBox="0 0 1200 430" role="group" aria-label="Equalizer response. Filter points adjust gain; use arrow keys or the filter controls for fine adjustment."></svg><div id="graphEmpty" class="graph-empty" role="status"><strong>Connecting to PipeQ</strong><span>Reading the live playback and filter state…</span></div><div id="graphTooltip" class="graph-tooltip" hidden></div></div>
+        <div class="graph-axis"><span>20 Hz</span><span>50</span><span>100</span><span>250</span><span>500</span><span>1 kHz</span><span>2.5 kHz</span><span>5 kHz</span><span>10 kHz</span><span>20 kHz</span></div>
+      </section>
+
+      <section class="editor-row">
+        <div class="bands-panel">
+          <div class="panel-heading compact-heading"><div><h2>Filter chain</h2><p>Select a filter or use its control to bypass it.</p></div><span id="bandCount" class="count"></span></div>
+          <div id="bandStrip" class="band-strip" role="group" aria-label="EQ filter selection and bypass controls"></div>
+        </div>
+        <section class="filter-panel" aria-labelledby="filterHeading">
+          <div class="panel-heading compact-heading"><div><div class="eyebrow" id="selectedBandName">FILTER 01</div><h2 id="filterHeading">Band controls</h2></div><div class="filter-actions"><button id="resetBand" class="reset-button" type="button">Reset</button><button id="toggleBand" class="toggle-button" type="button" aria-pressed="true">Enabled</button></div></div>
+          <div id="filterControls" class="filter-controls"></div>
+        </section>
+      </section>
+      <div id="message" class="message" role="status" aria-live="polite"></div>
+    </main>
+  </div>
+  <script nonce="__NONCE__" src="/app.js" type="module"></script>
+</body>
+</html>

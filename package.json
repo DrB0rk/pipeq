@@ -14,6 +14,7 @@
   "homepage": "https://github.com/DrB0rk/pipeq#readme",
   "files": [
     "dist",
+    "web",
     "README.md",
     "LICENSE"
   ],

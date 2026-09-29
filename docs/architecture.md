@@ -29,6 +29,8 @@ When an external default change moves playback from the EQ to a physical sink, t
 
 The optional tray exports a freedesktop StatusNotifierItem and dbusmenu on the user session bus. Missing desktop tray support does not affect PipeWire, TUI, or web controls.
 
+The web page and its scripts/styles live in `web/` and are served from disk with cache disabled so local edits appear after a browser refresh. Set `PIPEQ_WEB_PORT` when running `npm run dev` to keep a stable preview URL; otherwise PipeQ chooses an available local port.
+
 ## Safety model
 
 - EQ controls are clamped before writes.

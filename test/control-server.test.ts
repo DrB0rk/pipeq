@@ -30,6 +30,12 @@ test("local control UI binds to loopback and exposes its live state without CORS
     assert.equal(response.headers.get("access-control-allow-origin"), null);
     assert.equal(response.headers.get("x-content-type-options"), "nosniff");
     assert.deepEqual(await response.json(), state);
+    const script = await fetch(`${service.url}/app.js`);
+    assert.equal(script.status, 200);
+    assert.match(script.headers.get("content-type") ?? "", /javascript/);
+    assert.match(await script.text(), /responseAtFrequency/);
+    const responseModule = await fetch(`${service.url}/eq-response.js`);
+    assert.match(await responseModule.text(), /peakingResponseDb/);
   } finally {
     await service.close();
   }
@@ -41,13 +47,16 @@ test("mutations require the served origin and process token", async () => {
   try {
     const page = await fetch(service.url);
     assert.equal(page.status, 200);
-    assert.match(page.headers.get("content-security-policy") ?? "", /script-src 'nonce-/);
+    assert.match(page.headers.get("content-security-policy") ?? "", /script-src 'self' 'nonce-/);
     const html = await page.text();
-    const token = html.match(/const token='([^']+)'/)?.[1];
+    const token = html.match(/data-token="([^"]+)"/)?.[1];
     assert.ok(token);
-    assert.match(html, /PREFERENCES/);
-    assert.match(html, /keyRouteEq/);
-    assert.match(html, /Save preferences/);
+    assert.match(html, /Frequency response/);
+    assert.match(html, /\/app\.js/);
+    assert.match(html, /Preferences/);
+
+    const script = await fetch(`${service.url}/app.js`);
+    assert.match(await script.text(), /keyRouteEq/);
 
     const invalidOrigin = await fetch(`${service.url}/api/action`, {
       method: "POST",
@@ -78,6 +87,21 @@ test("mutations require the served origin and process token", async () => {
     });
     assert.equal(savePreferences.status, 200);
     assert.equal(actionCount, 2);
+
+    const createPreset = await fetch(`${service.url}/api/action`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-pipeq-token": token, origin: service.url },
+      body: JSON.stringify({ type: "createPreset", name: "Late night" }),
+    });
+    assert.equal(createPreset.status, 200);
+
+    const resetBand = await fetch(`${service.url}/api/action`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-pipeq-token": token, origin: service.url },
+      body: JSON.stringify({ type: "resetBand", name: "eq1" }),
+    });
+    assert.equal(resetBand.status, 200);
+    assert.equal(actionCount, 4);
   } finally {
     await service.close();
   }

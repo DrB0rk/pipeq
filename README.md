@@ -145,7 +145,7 @@ Press `n` with an EQ loaded to create a named preset. Select a preset in the sid
 
 ## Desktop controls and customization
 
-The TUI starts a web control page on a random localhost port and shows its URL in the header. The tray menu includes **Open web UI**, preset selection, output-device selection, PipeQ enable/bypass, and quit actions. The tray and web page control the same running PipeQ process as the TUI. The web listener binds only to `127.0.0.1`; it does not accept connections from other machines.
+The TUI starts a web control page on a random localhost port and shows its URL in the header. The page includes a draggable frequency-response graph, editable frequency/gain/Q per filter, band bypass and reset, preset creation and saving, and playback controls. The tray menu includes **Open web UI**, preset selection, output-device selection, PipeQ enable/bypass, and quit actions. The tray and web page control the same running PipeQ process as the TUI. The web listener binds only to `127.0.0.1`; it does not accept connections from other machines.
 
 PipeQ uses the freedesktop StatusNotifierItem tray protocol. KDE Plasma supports this directly. GNOME Shell needs an AppIndicator/KStatusNotifierItem extension for tray visibility. If no desktop tray watcher is present, PipeQ remains usable from the TUI and browser. `xdg-open` opens the browser from the tray.
 

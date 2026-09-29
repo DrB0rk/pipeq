@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { Box, measureElement, render, Spacer, Text, useApp, useInput, useStdin, useStdout } from "ink";
 import type { DOMElement, ElementMetrics } from "ink";
 
-import { BASS_BOOST_FREQUENCY, BASS_BOOST_MAX, BASS_BOOST_MIN, BASS_BOOST_STEP, GAIN_STEP, MAX_GAIN, PREAMP_MAX, PREAMP_MIN, PREAMP_PORT, PREAMP_STEP, bassBoostFromParams, buildBands, formatFrequency, formatValue, hasBassBoost, hasPreamp, portName, preampFromParams, preserveBandIndex, stepBand, updateBand } from "./eq.js";
+import { BASS_BOOST_FREQUENCY, BASS_BOOST_MAX, BASS_BOOST_MIN, BASS_BOOST_STEP, EQ_FREQUENCIES, GAIN_STEP, MAX_GAIN, PREAMP_MAX, PREAMP_MIN, PREAMP_PORT, PREAMP_STEP, bassBoostFromParams, buildBands, formatFrequency, formatValue, hasBassBoost, hasPreamp, portName, preampFromParams, preserveBandIndex, stepBand, updateBand } from "./eq.js";
 import { SgrMouseParser, type TerminalMouseEvent } from "./mouse.js";
 import { loadPresets, savePresets, upsertPreset } from "./presets.js";
 import { DEFAULT_EQ_DESCRIPTION, PipeWireClient, externalRouteAction } from "./pipewire.js";
@@ -928,8 +928,43 @@ function App({ options }: { options: CliOptions }): React.ReactElement {
     }
     if (action.type === "output") return selectOutput(action.id);
     if (action.type === "route") return action.enabled ? routeSelectedEq() : routePhysicalSink();
+    if (action.type === "savePreset") return saveSelectedPreset();
+    if (action.type === "createPreset") {
+      if (!node || !bandsRef.current.length) throw new Error("No EQ target is available for a new preset.");
+      const name = action.name.trim().slice(0, 48);
+      if (!name) throw new Error("Enter a name for the new preset.");
+      const preset: EqPreset = {
+        id: `preset-${Date.now()}`,
+        name,
+        bands: bandsRef.current.map((band) => ({ ...band })),
+        bassBoost: bassBoostRef.current,
+        preamp: preampRef.current,
+      };
+      const merged = upsertPreset(presets, preset);
+      await savePresets(merged);
+      setPresets(merged);
+      setSelectedPresetId(merged.find((candidate) => candidate.name.toLowerCase() === name.toLowerCase())?.id);
+      setPresetDirty(false);
+      setMessage(`${name} saved`);
+      return;
+    }
+    if (action.type === "resetBand") {
+      const bandIndex = bandsRef.current.findIndex((band) => band.name === action.name);
+      const band = bandsRef.current[bandIndex];
+      if (band && node) {
+        const reset = updateBand(updateBand(updateBand(band, "Freq", EQ_FREQUENCIES[band.index - 1] ?? band.freq), "Gain", 0), "Q", 0.7);
+        applyBand(bandIndex, reset);
+      }
+      return;
+    }
     if (action.type === "bass") return applyBassBoost(action.value);
     if (action.type === "preamp") return applyPreamp(action.value);
+    if (action.type === "bandEnabled") {
+      const bandIndex = bandsRef.current.findIndex((band) => band.name === action.name);
+      const band = bandsRef.current[bandIndex];
+      if (band && node && (band.enabled !== false) !== action.enabled) toggleBand(bandIndex);
+      return;
+    }
     if (action.type === "settings") {
       const next = await saveSettings(action.value);
       if (!next.audio.autoRouteOnDeviceChange) pendingAutoRouteEqIdRef.current = undefined;
@@ -941,7 +976,7 @@ function App({ options }: { options: CliOptions }): React.ReactElement {
     const bandIndex = bandsRef.current.findIndex((band) => band.name === action.name);
     const band = bandsRef.current[bandIndex];
     if (band && node) applyBand(bandIndex, updateBand(band, action.parameter === "freq" ? "Freq" : action.parameter === "gain" ? "Gain" : "Q", action.value));
-  }, [applyBand, applyBassBoost, applyPreamp, applyPreset, node, presets, routePhysicalSink, routeSelectedEq, selectOutput]);
+  }, [applyBand, applyBassBoost, applyPreamp, applyPreset, node, presets, routePhysicalSink, routeSelectedEq, saveSelectedPreset, selectOutput, toggleBand]);
 
   controlApiRef.current = {
     getState: () => {
@@ -969,6 +1004,7 @@ function App({ options }: { options: CliOptions }): React.ReactElement {
   useEffect(() => {
     let active = true;
     void startControlServer({
+      ...(Number(process.env.PIPEQ_WEB_PORT) > 0 ? { port: Number(process.env.PIPEQ_WEB_PORT) } : {}),
       getState: () => controlApiRef.current?.getState() ?? { nodes: [], sinks: [], presets: [], presetDirty: false, enabled: false, bands: [], bassBoost: 0, preamp: 0, accent: "#F3B562", settings: defaultSettings() },
       perform: (action) => controlApiRef.current ? controlApiRef.current.perform(action) : Promise.reject(new Error("PipeQ is starting.")),
     }).then(async (server) => {
